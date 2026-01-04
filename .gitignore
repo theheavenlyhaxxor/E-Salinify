@@ -1,0 +1,5 @@
+.venv
+.python-version
+smnist.h5
+hand_landmarker.task
+dataset

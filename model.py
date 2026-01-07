@@ -1,129 +1,71 @@
-import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
-import tensorflow as tf
-import cv2
-import mediapipe as mp
-from keras.models import load_model
-import numpy as np
-import time
+import matplotlib.pyplot as plt
+import seaborn as sns
+import keras
+from keras.models import Sequential
+from keras.layers import Dense, Conv2D , MaxPool2D , Flatten , Dropout , BatchNormalization
+from keras.src.legacy.preprocessing.image import ImageDataGenerator
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report,confusion_matrix
+from keras.callbacks import ReduceLROnPlateau
 import pandas as pd
-from mediapipe.modules import landmark_pb2
 
-model = load_model('smnist.h5')
+train_df = pd.read_csv("dataset/sign_mnist_train.csv")
+test_df = pd.read_csv("dataset/sign_mnist_test.csv")
 
+y_train = train_df['label']
+y_test = test_df['label']
+del train_df['label']
+del test_df['label']
 
-def compute_bbox(hand_landmarks, width, height, padding=20):
-    x_coords = [int(lm.x * width) for lm in hand_landmarks]
-    y_coords = [int(lm.y * height) for lm in hand_landmarks]
-    x_min = max(min(x_coords) - padding, 0)
-    y_min = max(min(y_coords) - padding, 0)
-    x_max = min(max(x_coords) + padding, width)
-    y_max = min(max(y_coords) + padding, height)
-    if x_min >= x_max or y_min >= y_max:
-        return None
-    return x_min, y_min, x_max, y_max
+from sklearn.preprocessing import LabelBinarizer
+label_binarizer = LabelBinarizer()
+y_train = label_binarizer.fit_transform(y_train)
+y_test = label_binarizer.fit_transform(y_test)
 
-mp_tasks = mp.tasks
-mp_vision = mp.tasks.vision
-mp_hands = mp.solutions.hands
-mp_drawing = mp.solutions.drawing_utils
+x_train = train_df.values
+x_test = test_df.values
 
-base_options = mp.tasks.BaseOptions(model_asset_path='hand_landmarker.task')
-options = mp_vision.HandLandmarkerOptions(base_options=base_options, num_hands=1)
-landmarker = mp_vision.HandLandmarker.create_from_options(options)
-cap = cv2.VideoCapture(0)
+x_train = x_train / 255
+x_test = x_test / 255
 
-if not cap.isOpened():
-    raise RuntimeError('Unable to access camera 0')
+x_train = x_train.reshape(-1,28,28,1)
+x_test = x_test.reshape(-1,28,28,1)
 
-img_counter = 0
-analysisframe = ''
-letterpred = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y']
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        print('Unable to read from camera. Exiting.')
-        break
+datagen = ImageDataGenerator(
+        featurewise_center=False,  # set input mean to 0 over the dataset
+        samplewise_center=False,  # set each sample mean to 0
+        featurewise_std_normalization=False,  # divide inputs by std of the dataset
+        samplewise_std_normalization=False,  # divide each input by its std
+        zca_whitening=False,  # apply ZCA whitening
+        rotation_range=10,  # randomly rotate images in the range (degrees, 0 to 180)
+        zoom_range = 0.1, # Randomly zoom image 
+        width_shift_range=0.1,  # randomly shift images horizontally (fraction of total width)
+        height_shift_range=0.1,  # randomly shift images vertically (fraction of total height)
+        horizontal_flip=False,  # randomly flip images
+        vertical_flip=False)  # randomly flip images
 
-    h, w = frame.shape[:2]
+datagen.fit(x_train)
 
-    k = cv2.waitKey(1)
-    if k%256 == 27:
-        # ESC pressed
-        print("Escape hit, closing...")
-        break
-    elif k%256 == 32:
-        # SPACE pressed
-        analysisframe = frame
-        cv2.imshow("Frame", analysisframe)
-        framergbanalysis = cv2.cvtColor(analysisframe, cv2.COLOR_BGR2RGB)
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=framergbanalysis)
-        resultanalysis = landmarker.detect(mp_image)
-        hand_landmarksanalysis = resultanalysis.hand_landmarks
-        bbox = None
-        if hand_landmarksanalysis:
-            for handLMsanalysis in hand_landmarksanalysis:
-                bbox = compute_bbox(handLMsanalysis, w, h)
-                if bbox:
-                    break
-        if not bbox:
-            print('No hand detected. Press space again to retry.')
-            continue
+learning_rate_reduction = ReduceLROnPlateau(monitor='val_accuracy', patience = 2, verbose=1,factor=0.5, min_lr=0.00001)
 
-        x_min, y_min, x_max, y_max = bbox
-        analysisframe = cv2.cvtColor(analysisframe, cv2.COLOR_BGR2GRAY)
-        analysisframe = analysisframe[y_min:y_max, x_min:x_max]
-        analysisframe = cv2.resize(analysisframe,(28,28))
+model = Sequential()
+model.add(Conv2D(75 , (3,3) , strides = 1 , padding = 'same' , activation = 'relu' , input_shape = (28,28,1)))
+model.add(BatchNormalization())
+model.add(MaxPool2D((2,2) , strides = 2 , padding = 'same'))
+model.add(Conv2D(50 , (3,3) , strides = 1 , padding = 'same' , activation = 'relu'))
+model.add(Dropout(0.2))
+model.add(BatchNormalization())
+model.add(MaxPool2D((2,2) , strides = 2 , padding = 'same'))
+model.add(Conv2D(25 , (3,3) , strides = 1 , padding = 'same' , activation = 'relu'))
+model.add(BatchNormalization())
+model.add(MaxPool2D((2,2) , strides = 2 , padding = 'same'))
+model.add(Flatten())
+model.add(Dense(units = 512 , activation = 'relu'))
+model.add(Dropout(0.3))
+model.add(Dense(units = 24 , activation = 'softmax'))
+model.compile(optimizer = 'adam' , loss = 'categorical_crossentropy' , metrics = ['accuracy'])
+model.summary()
 
+history = model.fit(datagen.flow(x_train,y_train, batch_size = 128) ,epochs = 20 , validation_data = (x_test, y_test) , callbacks = [learning_rate_reduction])
 
-        nlist = []
-        rows,cols = analysisframe.shape
-        for i in range(rows):
-            for j in range(cols):
-                k = analysisframe[i,j]
-                nlist.append(k)
-        
-        datan = pd.DataFrame(nlist).T
-        colname = []
-        for val in range(784):
-            colname.append(val)
-        datan.columns = colname
-
-        pixeldata = datan.values
-        pixeldata = pixeldata / 255
-        pixeldata = pixeldata.reshape(-1,28,28,1)
-        prediction = model.predict(pixeldata)
-        predarray = np.array(prediction[0])
-        letter_prediction_dict = {letterpred[i]: predarray[i] for i in range(len(letterpred))}
-        predarrayordered = sorted(predarray, reverse=True)
-        high1 = predarrayordered[0]
-        high2 = predarrayordered[1]
-        high3 = predarrayordered[2]
-        for key,value in letter_prediction_dict.items():
-            if value==high1:
-                print("Predicted Character 1: ", key)
-                print('Confidence 1: ', 100*value)
-            elif value==high2:
-                print("Predicted Character 2: ", key)
-                print('Confidence 2: ', 100*value)
-            elif value==high3:
-                print("Predicted Character 3: ", key)
-                print('Confidence 3: ', 100*value)
-        time.sleep(5)
-
-    framergb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=framergb)
-    result = landmarker.detect(mp_image)
-    hand_landmarks = result.hand_landmarks
-    if hand_landmarks:
-        for handLMs in hand_landmarks:
-            bbox = compute_bbox(handLMs, w, h)
-            if bbox:
-                x_min, y_min, x_max, y_max = bbox
-                cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
-            landmark_list = landmark_pb2.NormalizedLandmarkList(landmark=handLMs)
-            mp_drawing.draw_landmarks(frame, landmark_list, mp_hands.HAND_CONNECTIONS)
-    cv2.imshow("Frame", frame)
-
-cap.release()
-cv2.destroyAllWindows()
+model.save('HAND_MODEL.h5')

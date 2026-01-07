@@ -3,3 +3,5 @@
 smnist.h5
 hand_landmarker.task
 dataset
+videos
+HAND_MODEL.h5
